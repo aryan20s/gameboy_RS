@@ -31,16 +31,23 @@ impl BankedMemory {
         read_only: bool,
         bank_count: u16,
         bank_size: u16,
-        name: String,
+        fill_random: bool,
+        name: String
     ) -> BankedMemory {
-        BankedMemory {
+        let mut ret = BankedMemory {
             read_only,
             bank_count,
             bank_size,
             current_bank: 0,
             memory_data: vec![0u8; (bank_count * bank_size) as usize],
             name,
+        };
+
+        if fill_random {
+            ret.memory_data.iter_mut().for_each(|i| *i = rand::random());
         }
+
+        return ret;
     }
 
     pub fn switch_bank(&mut self, new_bank: u16) {

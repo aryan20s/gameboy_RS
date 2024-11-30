@@ -73,7 +73,7 @@ pub fn sla_reg(gb: &mut Gameboy, opcode: W<u8>) {
     } else {
         gb.reg.unset_flag_c();
     }
-    
+
     let result = lhs << 1;
 
     if result.0 == 0 {
@@ -99,7 +99,7 @@ pub fn sra_reg(gb: &mut Gameboy, opcode: W<u8>) {
     if lhs.0 & 0x80 != 0 {
         bit_0 = W(0x80u8);
     }
-    
+
     let result = (lhs >> 1) | bit_0;
 
     if result.0 == 0 {
@@ -170,11 +170,14 @@ fn rl_reg(gb: &mut Gameboy, opcode: W<u8>) {
     instr_common::resolve_write_reg_low(gb, opcode, result);
 }
 
-
 #[inline(always)]
 fn rr_reg(gb: &mut Gameboy, opcode: W<u8>) {
     let lhs = instr_common::resolve_read_reg_low(gb, opcode);
-    let old_carry = if gb.reg.get_flag_c() { W(0x80u8) } else { W(0x00u8) };
+    let old_carry = if gb.reg.get_flag_c() {
+        W(0x80u8)
+    } else {
+        W(0x00u8)
+    };
     let bit_0 = if (lhs.0 & 0x1) != 0 { true } else { false };
     let result = (lhs >> 1) | old_carry;
 

@@ -21,7 +21,7 @@ pub fn set_op_flags_add(gb: &mut Gameboy, lhs: W<u8>, rhs: W<u8>, carry: bool, z
             gb.reg.unset_flag_c();
         }
     }
-    
+
     if zero {
         if (lhs + rhs).0 == 0 {
             gb.reg.set_flag_z();
@@ -34,7 +34,7 @@ pub fn set_op_flags_add(gb: &mut Gameboy, lhs: W<u8>, rhs: W<u8>, carry: bool, z
 #[inline(always)]
 pub fn set_op_flags_adc(gb: &mut Gameboy, lhs: W<u8>, rhs: W<u8>, carry: bool, zero: bool) {
     let carry_flag_set = W(if gb.reg.get_flag_c() { 1u8 } else { 0u8 });
-    
+
     if (lhs.0 & 0xF) + (rhs.0 & 0xF) + carry_flag_set.0 >= 0x10 {
         gb.reg.set_flag_h();
     } else {
@@ -73,7 +73,7 @@ pub fn set_op_flags_sub(gb: &mut Gameboy, lhs: W<u8>, rhs: W<u8>, carry: bool, z
             gb.reg.unset_flag_c();
         }
     }
-    
+
     if zero {
         if (lhs - rhs).0 == 0 {
             gb.reg.set_flag_z();
@@ -100,7 +100,7 @@ pub fn set_op_flags_sbc(gb: &mut Gameboy, lhs: W<u8>, rhs: W<u8>, carry: bool, z
             gb.reg.unset_flag_c();
         }
     }
-    
+
     if zero {
         if (lhs - rhs - carry_flag_set).0 == 0 {
             gb.reg.set_flag_z();
@@ -150,7 +150,8 @@ pub fn and_a_reg(gb: &mut Gameboy, opcode: W<u8>) {
     gb.reg.a &= rhs;
 
     gb.reg.unset_all_flags();
-    gb.reg.set_f(FLAG_H | if gb.reg.a == W(0) { FLAG_Z } else { W(0) });
+    gb.reg
+        .set_f(FLAG_H | if gb.reg.a == W(0) { FLAG_Z } else { W(0) });
 }
 
 #[inline(always)]
@@ -302,7 +303,8 @@ pub fn and_a_u8(gb: &mut Gameboy) {
     gb.reg.a &= rhs;
 
     gb.reg.unset_all_flags();
-    gb.reg.set_f(FLAG_H | if gb.reg.a == W(0) { FLAG_Z } else { W(0) });
+    gb.reg
+        .set_f(FLAG_H | if gb.reg.a == W(0) { FLAG_Z } else { W(0) });
 }
 
 #[inline(always)]
@@ -403,7 +405,11 @@ pub fn rla(gb: &mut Gameboy) {
 #[inline(always)]
 pub fn rra(gb: &mut Gameboy) {
     let lhs = gb.reg.a;
-    let old_carry = if gb.reg.get_flag_c() { W(0x80u8) } else { W(0x00u8) };
+    let old_carry = if gb.reg.get_flag_c() {
+        W(0x80u8)
+    } else {
+        W(0x00u8)
+    };
     let bit_0 = if (lhs.0 & 0x1) != 0 { true } else { false };
     let result = (lhs >> 1) | old_carry;
     gb.reg.unset_all_flags();
@@ -477,21 +483,21 @@ pub fn ld_hl_sp_i8(gb: &mut Gameboy) {
 
 pub fn daa(gb: &mut Gameboy) {
     if !gb.reg.get_flag_n() {
-            if gb.reg.get_flag_c() || gb.reg.a.0 > 0x99 { 
-                gb.reg.a += W(0x60); 
-                gb.reg.set_flag_c(); 
-            }
-            if gb.reg.get_flag_h() || (gb.reg.a.0 & 0x0f) > 0x09 { 
-                gb.reg.a += W(0x6); 
-            }
-        } else {
-            if gb.reg.get_flag_c() { 
-                gb.reg.a -= W(0x60); 
-            }
-            if gb.reg.get_flag_h() { 
-                gb.reg.a -= W(0x6); 
-            }
+        if gb.reg.get_flag_c() || gb.reg.a.0 > 0x99 {
+            gb.reg.a += W(0x60);
+            gb.reg.set_flag_c();
         }
+        if gb.reg.get_flag_h() || (gb.reg.a.0 & 0x0f) > 0x09 {
+            gb.reg.a += W(0x6);
+        }
+    } else {
+        if gb.reg.get_flag_c() {
+            gb.reg.a -= W(0x60);
+        }
+        if gb.reg.get_flag_h() {
+            gb.reg.a -= W(0x6);
+        }
+    }
 
     if gb.reg.a.0 == 0 {
         gb.reg.set_flag_z();

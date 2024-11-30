@@ -1,18 +1,18 @@
-use banked_memory::BankedMemory;
-use minifb::Key;
+use ppu::Color;
 use core::num::Wrapping as W;
-use game_cart::GameCart;
-use game_cart::MapperType;
+use game_carts::GameCart;
+use banked_memory::BankedMemory;
+use log::{debug, error, info};
+use minifb::Key;
 use ppu::PPU;
 use registers::Registers;
-use log::{info, debug, error};
 
-use std::{fs, io::BufWriter, fs::File, io::Write};
+use std::{fs, fs::File, io::BufWriter, io::Write};
 
 use self::render::InputKey;
 
 pub mod banked_memory;
-pub mod game_cart;
+pub mod game_carts;
 pub mod io_reg;
 pub mod opcodes;
 pub mod ppu;
@@ -54,7 +54,7 @@ pub struct Gameboy {
     reg: Registers,
     ppu: PPU,
     bootrom_data: Vec<u8>,
-    rom: GameCart,
+    rom: Box<dyn GameCart>,
     wram: BankedMemory,
     hram: Vec<u8>,
     pc: W<u16>,
@@ -72,77 +72,59 @@ pub struct OtherState {
     int_enable: u8,
     int_flag: u8,
     halted: bool,
-    gb_doctor_mode: bool,
     instrs_run: u128,
     counter_div: W<u16>,
     counter_tima: W<u8>,
     counter_tma: u8,
     counter_tac: u8,
     joypad_io_state: u8,
-    input_keys: Vec<InputKey>
+    oam_dma_running: bool,
+    oam_dma_start_addr: u16,
+    oam_dma_cur_addr: u8,
+    input_keys: Vec<InputKey>,
+    force_crash: bool,
 }
 
 impl OtherState {
     pub fn new() -> OtherState {
-        OtherState { 
+        OtherState {
             bootrom_enabled: true,
             ime_next_cycle: false,
             int_enable: 0,
             int_flag: 0,
             halted: false,
-            gb_doctor_mode: false,
             instrs_run: 0,
             counter_div: W(0),
             counter_tima: W(0),
             counter_tma: 0,
             counter_tac: 0,
             joypad_io_state: 0,
-            input_keys: Vec::<InputKey>::with_capacity(8)
+            oam_dma_running: false,
+            oam_dma_start_addr: 0,
+            oam_dma_cur_addr: 0,
+            input_keys: Vec::<InputKey>::with_capacity(8),
+            force_crash: false,
         }
     }
 }
 
 impl Gameboy {
-    pub fn new(system_type: SystemType, rom_file_path: &str, bootrom_file_path: &str, gb_doctor_mode: bool) -> Gameboy {
+    pub fn new(
+        system_type: SystemType,
+        rom_file_path: &str,
+        bootrom_file_path: &str
+    ) -> Gameboy {
         let rom_data = fs::read(rom_file_path).unwrap();
         let bootrom_data = fs::read(bootrom_file_path).unwrap();
-
-        let rom: GameCart;
-        let cart_ram_bank_count = match rom_data[0x149] {
-            0x02 => 1,
-            0x03 => 4,
-            0x04 => 16,
-            0x05 => 8,
-            _ => 0
-        };
-
-        match rom_data[0x147] {
-            0x00 => {
-                rom = GameCart::new(MapperType::NoMapper, rom_data, 0);
-            }
-            0x01 | 0x02 | 0x03 => {
-                rom = GameCart::new(MapperType::MBC1, rom_data, cart_ram_bank_count);
-            }
-
-            0xf | 0x10 | 0x11 | 0x12 | 0x13 => {
-                rom = GameCart::new(MapperType::MBC3, rom_data, cart_ram_bank_count);
-            }
-            
-            _ => {
-                debug!("Unknown mapper {:#04x}, defaulting to no mapper.", rom_data[0x147]);
-                rom = GameCart::new(MapperType::NoMapper, rom_data, 0);
-            }
-        }
-        debug!("Using mapper {:?}", rom.get_mapper());
 
         match system_type {
             SystemType::DMG => {
                 let mut dmg_ret = Gameboy {
                     reg: Registers::new(),
                     ppu: PPU::new(system_type),
-                    rom,
+                    rom: game_carts::get_cart(rom_data),
                     bootrom_data,
-                    wram: BankedMemory::new_empty(false, 1, 0x2000, String::from("dmg wram")),
+                    wram: BankedMemory::new_empty(false, 1, 0x2000, true, String::from("dmg wram")),
                     hram: vec![0u8; 0x80],
                     pc: W(0),
                     sp: W(0),
@@ -150,19 +132,32 @@ impl Gameboy {
                     cycles_pending: 0,
                     cycles_run: 0,
                     display_frame_cycles: 0,
-                    other_state: OtherState::new()
+                    other_state: OtherState::new(),
                 };
 
-                dmg_ret.other_state.gb_doctor_mode = gb_doctor_mode;
-
-                dmg_ret.other_state.input_keys.push(InputKey::new(Key::Enter)); //start
-                dmg_ret.other_state.input_keys.push(InputKey::new(Key::Space)); //sel
+                dmg_ret
+                    .other_state
+                    .input_keys
+                    .push(InputKey::new(Key::Enter)); //start
+                dmg_ret
+                    .other_state
+                    .input_keys
+                    .push(InputKey::new(Key::Space)); //sel
                 dmg_ret.other_state.input_keys.push(InputKey::new(Key::S)); //b
                 dmg_ret.other_state.input_keys.push(InputKey::new(Key::A)); //a
-                dmg_ret.other_state.input_keys.push(InputKey::new(Key::Down)); //down
+                dmg_ret
+                    .other_state
+                    .input_keys
+                    .push(InputKey::new(Key::Down)); //down
                 dmg_ret.other_state.input_keys.push(InputKey::new(Key::Up)); //up
-                dmg_ret.other_state.input_keys.push(InputKey::new(Key::Left)); //left
-                dmg_ret.other_state.input_keys.push(InputKey::new(Key::Right)); //right
+                dmg_ret
+                    .other_state
+                    .input_keys
+                    .push(InputKey::new(Key::Left)); //left
+                dmg_ret
+                    .other_state
+                    .input_keys
+                    .push(InputKey::new(Key::Right)); //right
                 return dmg_ret;
             }
         }
@@ -175,9 +170,9 @@ impl Gameboy {
     }
 
     #[inline(always)]
-    pub fn read_byte(&mut self, addr: W<u16>) -> W<u8> {
+    pub fn read_byte_raw(&mut self, addr: W<u16>) -> W<u8> {
         let addr = addr.0;
-        self.cycles_pending += 4;
+
         match addr {
             ROM_START..=ROM_END => {
                 if self.other_state.bootrom_enabled && addr < BOOTROM_SIZE {
@@ -189,7 +184,7 @@ impl Gameboy {
                 return W(self.ppu.read_vram_byte(addr - VRAM_START));
             }
             CART_RAM_START..=CART_RAM_END => {
-                return W(self.rom.read_cart_ram_byte(addr - CART_RAM_START));
+                return W(self.rom.read_byte(addr));
             }
             WRAM_START..=WRAM_END => {
                 return W(self.wram.read_byte(addr - WRAM_START));
@@ -216,10 +211,21 @@ impl Gameboy {
     }
 
     #[inline(always)]
-    pub fn write_byte(&mut self, addr: W<u16>, value: W<u8>) {
+    pub fn read_byte(&mut self, addr: W<u16>) -> W<u8> {
+        self.cycles_pending += 4;
+
+        if self.other_state.oam_dma_running && addr.0 < IO_REG_START {
+            return W(UNDEFINED_READ);
+        }
+
+        return self.read_byte_raw(addr);
+    }
+
+    #[inline(always)]
+    pub fn write_byte_raw(&mut self, addr: W<u16>, value: W<u8>) {
         let value = value.0;
         let addr = addr.0;
-        self.cycles_pending += 4;
+
         match addr {
             ROM_START..=ROM_END => {
                 self.rom.write_byte(addr, value);
@@ -228,7 +234,7 @@ impl Gameboy {
                 self.ppu.write_vram_byte(addr - VRAM_START, value);
             }
             CART_RAM_START..=CART_RAM_END => {
-                self.rom.write_cart_ram_byte(addr - CART_RAM_START, value);
+                self.rom.write_byte(addr, value);
             }
             WRAM_START..=WRAM_END => {
                 self.wram.write_byte(addr - WRAM_START, value);
@@ -252,6 +258,17 @@ impl Gameboy {
                 return;
             }
         }
+    }
+
+    #[inline(always)]
+    pub fn write_byte(&mut self, addr: W<u16>, value: W<u8>) {
+        self.cycles_pending += 4;
+
+        if self.other_state.oam_dma_running && addr.0 < IO_REG_START {
+            return;
+        }
+
+        self.write_byte_raw(addr, value);
     }
 
     #[inline(always)]
@@ -293,27 +310,17 @@ impl Gameboy {
     }
 }
 
-pub fn run_frame<'a>(gb: &'a mut Gameboy, gb_doctor_log_writer: &'a mut BufWriter<File>, input_keys: &Vec<InputKey>) -> Result<Vec<u32>, &'a str> {
+pub fn run_frame<'a>(
+    gb: &'a mut Gameboy,
+    input_keys: &Vec<InputKey>,
+) -> Result<Vec<u32>, &'a str> {
     handle_input(gb, input_keys);
     gb.display_frame_cycles = 70224;
     loop {
-        if gb.other_state.gb_doctor_mode && !gb.other_state.bootrom_enabled {
-            let pcmem1 = gb.read_byte_inc_pc();
-            let pcmem2 = gb.read_byte_inc_pc();
-            let pcmem3 = gb.read_byte_inc_pc();
-            let pcmem4 = gb.read_byte_inc_pc();
-            gb.cycles_pending -= 16;
-            gb.pc -= 4;
-
-            write!(gb_doctor_log_writer, "A: {:02X} F: {:02X} B: {:02X} C: {:02X} D: {:02X} E: {:02X} H: {:02X} L: {:02X} SP: {:04X} PC: 00:{:04X} ({:02X} {:02X} {:02X} {:02X})\n",
-                gb.reg.a, gb.reg.get_f(), gb.reg.b, gb.reg.c, gb.reg.d, gb.reg.e, gb.reg.h, gb.reg.l, gb.sp, gb.pc, pcmem1, pcmem2, pcmem3, pcmem4
-            ).unwrap();
-        }
-
         gb.other_state.instrs_run += 1;
         gb.cycles_pending = 0;
 
-        let mut opcode:W<u8> = W(0);
+        let mut opcode: W<u8> = W(0);
 
         if !gb.other_state.halted {
             opcode = gb.read_byte_inc_pc();
@@ -326,26 +333,30 @@ pub fn run_frame<'a>(gb: &'a mut Gameboy, gb_doctor_log_writer: &'a mut BufWrite
             gb.ime = true;
         }
 
-        if opcodes::run_opcode(gb, opcode) {
+        if opcodes::run_opcode(gb, opcode) && !gb.other_state.force_crash {
             gb.cycles_run += gb.cycles_pending as u128;
 
             process_interrupts(gb);
-            
+
             if !gb.ppu.is_enabled() {
                 gb.display_frame_cycles -= gb.cycles_pending as i32;
                 if gb.display_frame_cycles <= 0 {
                     gb.display_frame_cycles = 70224;
-                    return Ok(vec![0u32]);
+                    return Ok(vec![ppu::Color::White as u32]);
                 }
             }
-            
+
             if let Some(frame) = gb.ppu.run_cycles(gb.cycles_pending, &mut gb.other_state) {
                 return Ok(frame);
             }
 
             process_timers(gb);
 
-            //process dma, serial, etc
+            if gb.other_state.oam_dma_running {
+                process_oam_dma(gb);
+            }
+
+            //process serial, etc
         } else {
             error!("Invalid opcode {:#04x}!", opcode);
             gb.debug(true);
@@ -358,7 +369,7 @@ pub fn run_frame<'a>(gb: &'a mut Gameboy, gb_doctor_log_writer: &'a mut BufWrite
 pub fn process_interrupts(gb: &mut Gameboy) {
     let interrupts_to_process = gb.other_state.int_enable & gb.other_state.int_flag;
 
-    if (interrupts_to_process & 0x1f)  != 0 {
+    if (interrupts_to_process & 0x1f) != 0 {
         gb.other_state.halted = false;
 
         let interrupt_jump_addr: Option<W<u16>>;
@@ -382,7 +393,7 @@ pub fn process_interrupts(gb: &mut Gameboy) {
             interrupt_jump_addr = None;
             interrupt_mask = 0xff;
         }
-        
+
         if gb.ime && interrupt_jump_addr.is_some() {
             gb.cycles_pending += 8;
             gb.push_short(gb.pc);
@@ -398,22 +409,60 @@ pub fn process_interrupts(gb: &mut Gameboy) {
 
 pub fn process_timers(gb: &mut Gameboy) {
     gb.other_state.counter_div += gb.cycles_pending as u16;
+}
 
-    
+pub fn process_oam_dma(gb: &mut Gameboy) {
+    for _ in 0..(gb.cycles_pending / 4) {
+        if !gb.other_state.oam_dma_running {
+            break;
+        }
+
+        let addr_src =
+            W(gb.other_state.oam_dma_start_addr + gb.other_state.oam_dma_cur_addr as u16);
+        let addr_dest = W(OAM_START + gb.other_state.oam_dma_cur_addr as u16);
+        let to_write = gb.read_byte_raw(addr_src);
+        gb.write_byte_raw(addr_dest, to_write);
+
+        gb.other_state.oam_dma_cur_addr = gb.other_state.oam_dma_cur_addr.wrapping_add(1);
+        gb.other_state.oam_dma_running = gb.other_state.oam_dma_cur_addr < 0xA0;
+    }
+
+
+    //debug!("Copied {} bytes for OAM. (cur idx: 0x{:#02x})", gb.cycles_pending / 4, gb.other_state.oam_dma_cur_addr);
 }
 
 pub fn handle_input(gb: &mut Gameboy, input_keys: &Vec<InputKey>) {
-    for i in input_keys.iter().zip(0..9) {
-        if i.0.get_state_just_changed() {
-            if i.1 == 8 {
-                if i.0.get_held() {
-                    gb.ppu.set_lcdc(gb.ppu.get_lcdc() ^ 0x48); //invert bit 6 and 3
+    for i in input_keys.iter().enumerate() {
+        if i.1.get_state_just_changed() {
+            if i.0 == 8 {
+                if i.1.get_held() {
+                    gb.ppu.dbg_tilemap_bg_swap = !gb.ppu.dbg_tilemap_bg_swap;
+                }
+                continue;
+            } else if i.0 == 9 {
+                if i.1.get_held() {
+                    gb.ppu.dbg_tiledata_bg_swap = !gb.ppu.dbg_tiledata_bg_swap;
+                }
+                continue;
+            } else if i.0 == 10 {
+                if i.1.get_held() {
+                    gb.ppu.dbg_tilemap_win_swap = !gb.ppu.dbg_tilemap_win_swap;
+                }
+                continue;
+            } else if i.0 == 11 {
+                if i.1.get_held() {
+                    gb.ppu.dbg_tiledata_win_swap = !gb.ppu.dbg_tiledata_win_swap;
+                }
+                continue;
+            } else if i.0 == 12 {
+                if i.1.get_held() {
+                    gb.ppu.dbg_win_toggle = !gb.ppu.dbg_win_toggle;
                 }
                 continue;
             }
-            
+
             gb.other_state.int_flag |= INT_GAMEPAD;
-            gb.other_state.input_keys[i.1].copy_state_from_other(i.0);
+            gb.other_state.input_keys[i.0].copy_state_from_other(i.1);
         }
     }
 }

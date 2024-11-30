@@ -1,21 +1,30 @@
-use std::{
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use log::debug;
 use minifb::{Key, Window, WindowOptions};
 
 extern crate spin_sleep;
 
+const GB_SCREEN_WIDTH: usize = 160;
+const GB_SCREEN_HEIGHT: usize = 144;
+const SIZE_MULTIPLIER: usize = 3;
+const WINDOW_WIDTH: usize = GB_SCREEN_WIDTH * SIZE_MULTIPLIER;
+const WINDOW_HEIGHT: usize = GB_SCREEN_HEIGHT * SIZE_MULTIPLIER;
+const FRAME_TIME_MICROS: u64 = 16450;
+
 pub struct InputKey {
     state_just_changed: bool,
     hardware_key: Key,
-    currently_held: bool
+    currently_held: bool,
 }
 
 impl InputKey {
     pub fn new(hardware_key: Key) -> Self {
-        Self { state_just_changed: false, hardware_key: hardware_key, currently_held: false }
+        Self {
+            state_just_changed: false,
+            hardware_key: hardware_key,
+            currently_held: false,
+        }
     }
 
     pub fn get_held(&self) -> bool {
@@ -55,15 +64,8 @@ impl InputKey {
 pub struct Renderer {
     window: Window,
     last_frame_time: Instant,
-    pub keys: Vec<InputKey>
+    pub keys: Vec<InputKey>,
 }
-
-const GB_SCREEN_WIDTH: usize = 160;
-const GB_SCREEN_HEIGHT: usize = 144;
-const SIZE_MULTIPLIER: usize = 3;
-const WINDOW_WIDTH: usize = GB_SCREEN_WIDTH * SIZE_MULTIPLIER;
-const WINDOW_HEIGHT: usize = GB_SCREEN_HEIGHT * SIZE_MULTIPLIER;
-const FRAME_TIME_MICROS: u64 = 16450;
 
 impl Renderer {
     pub fn new() -> Renderer {
@@ -76,13 +78,12 @@ impl Renderer {
         .unwrap_or_else(|e| {
             panic!("Failed to create window, {}", e);
         });
-        window.limit_update_rate(Some(Duration::from_micros(16600)));
-        window.limit_update_rate(None);
+        window.set_target_fps(0);
 
         let mut ret = Renderer {
             window,
             last_frame_time: Instant::now(),
-            keys: Vec::<InputKey>::with_capacity(8)
+            keys: Vec::<InputKey>::with_capacity(8),
         };
 
         ret.keys.push(InputKey::new(Key::Enter)); //start
@@ -93,7 +94,11 @@ impl Renderer {
         ret.keys.push(InputKey::new(Key::Up)); //up
         ret.keys.push(InputKey::new(Key::Left)); //left
         ret.keys.push(InputKey::new(Key::Right)); //right
-        ret.keys.push(InputKey::new(Key::Q)); //debug swap tilemap
+        ret.keys.push(InputKey::new(Key::Q)); //debug swap tilemap bg
+        ret.keys.push(InputKey::new(Key::W)); //debug swap tiledata bg
+        ret.keys.push(InputKey::new(Key::E)); //debug swap tilemap win
+        ret.keys.push(InputKey::new(Key::R)); //debug swap tiledata win
+        ret.keys.push(InputKey::new(Key::T)); //debug toggle window
 
         ret
     }
@@ -103,7 +108,8 @@ impl Renderer {
 
         for y in 0..WINDOW_HEIGHT {
             for x in 0..WINDOW_WIDTH {
-                let value = display[(x / SIZE_MULTIPLIER) + (y / SIZE_MULTIPLIER) * GB_SCREEN_WIDTH];
+                let value =
+                    display[(x / SIZE_MULTIPLIER) + (y / SIZE_MULTIPLIER) * GB_SCREEN_WIDTH];
                 buffer[x + y * WINDOW_WIDTH] = value;
             }
         }
@@ -114,7 +120,7 @@ impl Renderer {
 
         for i in &mut self.keys {
             i.update(&self.window);
-        }      
+        }
 
         if !self.window.is_key_down(Key::LeftCtrl) {
             let this_frame_end_time = self
@@ -124,7 +130,7 @@ impl Renderer {
             let frame_delta = this_frame_end_time
                 .checked_duration_since(Instant::now())
                 .unwrap_or(Duration::from_micros(0));
-        
+
             spin_sleep::sleep(frame_delta);
         }
         self.last_frame_time = Instant::now();

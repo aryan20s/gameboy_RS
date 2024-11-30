@@ -1,5 +1,5 @@
 use core::num::Wrapping as W;
-use std::ops::BitAnd;
+use std::ops::{BitAnd, Shl};
 
 use super::{Gameboy, UNDEFINED_READ};
 
@@ -17,9 +17,12 @@ const PPU_SCROLL_Y: u8 = 0x42;
 const PPU_SCROLL_X: u8 = 0x43;
 const PPU_LCD_Y: u8 = 0x44;
 const PPU_LY_COMPARE: u8 = 0x45;
+const OAM_DMA_REG: u8 = 0x46;
 const PPU_BGPAL: u8 = 0x47;
-const PPU_WX: u8 = 0x4a;
-const PPU_WY: u8 = 0x4b;
+const PPU_OBP1: u8 = 0x48;
+const PPU_OBP2: u8 = 0x49;
+const PPU_WY: u8 = 0x4a;
+const PPU_WX: u8 = 0x4b;
 const BOOTROM_DISABLE: u8 = 0x50;
 
 pub fn read_byte(gb: &mut Gameboy, addr: u8) -> u8 {
@@ -46,9 +49,6 @@ pub fn read_byte(gb: &mut Gameboy, addr: u8) -> u8 {
             return gb.ppu.scroll_x.0;
         }
         PPU_LCD_Y => {
-            if gb.other_state.gb_doctor_mode && !gb.other_state.bootrom_enabled {
-                return 0x90;
-            }
             return gb.ppu.get_current_y();
         }
         PPU_LY_COMPARE => {
@@ -56,6 +56,12 @@ pub fn read_byte(gb: &mut Gameboy, addr: u8) -> u8 {
         }
         PPU_BGPAL => {
             return gb.ppu.get_bgpal();
+        }
+        PPU_OBP1 => {
+            return gb.ppu.get_obp1();
+        }
+        PPU_OBP2 => {
+            return gb.ppu.get_obp2();
         }
         PPU_WX => {
             return gb.ppu.window_x;
@@ -105,7 +111,7 @@ pub fn write_byte(gb: &mut Gameboy, addr: u8, value: u8) {
                     new_val &= !0x1;
                 }
             }
-            
+
             gb.other_state.joypad_io_state = new_val;
         }
         COUNTER_DIV => {
@@ -132,14 +138,25 @@ pub fn write_byte(gb: &mut Gameboy, addr: u8, value: u8) {
         PPU_LY_COMPARE => {
             gb.ppu.set_ly_compare(value);
         }
+        OAM_DMA_REG => {
+            gb.other_state.oam_dma_start_addr = (value as u16).shl(8);
+            gb.other_state.oam_dma_running = true;
+            gb.other_state.oam_dma_cur_addr = 0;
+        }
         PPU_BGPAL => {
             gb.ppu.set_bgpal(value);
         }
-        PPU_WX => {
-            gb.ppu.window_x = value;
+        PPU_OBP1 => {
+            gb.ppu.set_obp1(value);
+        }
+        PPU_OBP2 => {
+            gb.ppu.set_obp2(value);
         }
         PPU_WY => {
             gb.ppu.window_y = value;
+        }
+        PPU_WX => {
+            gb.ppu.window_x = value;
         }
         BOOTROM_DISABLE => {
             if value & 0x1 == 0x1 {

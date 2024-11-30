@@ -5,8 +5,8 @@ pub mod instr_common;
 pub mod jump_instrs;
 pub mod load_instrs;
 pub mod math_instrs;
-pub mod prefix_cb;
 pub mod misc_instrs;
+pub mod prefix_cb;
 
 #[inline(always)]
 pub fn run_opcode(gb: &mut Gameboy, opcode: W<u8>) -> bool {
